@@ -1,0 +1,112 @@
+$installer = <<SCRIPT
+echo 'Staff install'
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+sudo apt-get update
+# Update apt and get dependencies
+sudo apt-get -y update
+sudo apt-mark hold grub
+sudo apt-mark hold grub-pc
+sudo apt-get -y upgrade
+sudo apt-get install -y zip unzip curl wget socat ebtables git vim
+sudo apt install default-jre -y
+SCRIPT
+
+$ansible = <<SCRIPT
+echo 'Ansible install'
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+sudo apt-get update
+	# install pyton
+sudo add-apt-repository ppa:deadsnakes/ppa 
+sudo apt-get update
+sudo apt install python3.9 -y
+sudo apt-get install python3.9-distutils -y
+	# install pip
+curl -fsSL https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+export PATH="$PATH:/home/vagrant/.local/bin"
+echo $PATH
+python3.9 get-pip.py --ansible
+	# install ansible
+
+	# В итоге заработало вот так:
+sudo apt-add-repository ppa:ansible/ansible
+sudo apt-get update -y
+sudo apt-get install ansible -y
+
+	# python3.9 -m pip install --ansible ansible
+	# python3.9 -m pip install --upgrade --ansible ansible
+ansible --version
+	# python3.9 -m pip show ansible
+SCRIPT
+
+$ssh_accessor = <<SCRIPT
+sudo chown jenkins /home/jenkins/.ssh/id_rsa
+sudo chown jenkins /home/jenkins/.ssh/id_rsa.pub
+sudo -u jenkins /bin/sh <<\DEVOPS_BLOCK
+	echo 'Copying SSH Keys to the VM'
+	
+	chmod 700 /home/jenkins/.ssh/id_rsa
+	chmod 777 /home/jenkins/.ssh/id_rsa.pub
+	
+	
+	cat /home/jenkins/.ssh/id_rsa.pub >> /home/jenkins/.ssh/authorized_keys	
+		
+	echo 'Host 10.0.0.*' >> /home/jenkins/.ssh/config
+	echo 'StrictHostKeyChecking no' >> /home/jenkins/.ssh/config
+	echo 'UserKnownHostsFile /dev/null' >> /home/jenkins/.ssh/config
+	
+	chmod go-w /home/jenkins/
+	chmod 700 /home/jenkins/.ssh
+	chmod 600 /home/jenkins/.ssh/authorized_keys
+	chmod 600 /home/jenkins/.ssh/config
+	# sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /home/jenkins/.ssh/config		
+DEVOPS_BLOCK
+sudo systemctl restart sshd.service
+SCRIPT
+
+$add_new_user = <<SCRIPT
+# sudo mkdir -pv /home/jenkins
+# sudo chown jenkins /home/jenkins
+# sudo usermod -d /home/jenkins -m jenkins
+
+sudo useradd -p jenkins -m -d /home/jenkins/ -s /bin/bash -G sudo jenkins
+echo 'jenkins ALL=(ALL:ALL) NOPASSWD: ALL' | sudo EDITOR='tee -a' visudo
+sudo -u jenkins /bin/sh <<\DEVOPS_BLOCK		
+	mkdir -p /home/jenkins/.ssh
+	chmod 777 /home/jenkins/.ssh
+DEVOPS_BLOCK
+SCRIPT
+
+$jenkins = <<SCRIPT
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+sudo apt-get update
+# Update apt and get dependencies
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/ | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+sudo apt-get update
+sudo apt-get install jenkins -y 
+echo "Jenkins security key:"
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+SCRIPT
+
+Vagrant.configure("2") do |config|
+  
+	config.vm.define "ansible" do |vmCfg|
+		vmCfg.vm.box = "ubuntu/bionic64"
+		vmCfg.vm.hostname = "ansible"
+		vmCfg.vm.network "private_network", ip: "10.0.0.111"
+		vmCfg.vm.provision 'shell', inline: 'echo "vagrant:vagrant" | chpasswd'
+		vmCfg.vm.network 'forwarded_port', guest: 8080, host: 2020
+		vmCfg.vm.provision "shell", inline: "echo \"1. installer script is running\""
+ 		vmCfg.vm.provision "shell", inline: $installer, privileged: false
+		vmCfg.vm.provision "shell", inline: "echo \"2. ansible script is running\""
+ 		vmCfg.vm.provision "shell", inline: $ansible, privileged: false	
+		vmCfg.vm.provision "shell", inline: "echo \"3. add_new_user script is running\""
+		vmCfg.vm.provision "shell", inline: $add_new_user, privileged: false
+		vmCfg.vm.provision "file", source: "~/.ssh/id_rsa", destination: "/home/jenkins/.ssh/id_rsa"
+		vmCfg.vm.provision "file", source: "~/.ssh/id_rsa.pub", destination: "/home/jenkins/.ssh/id_rsa.pub"
+		vmCfg.vm.provision "shell", inline: "echo \"4. ssh_accessor script is running\""
+		vmCfg.vm.provision "shell", inline: $ssh_accessor, privileged: false		
+		vmCfg.vm.provision "shell", inline: "echo \"5. jenkins script is running\""
+ 		vmCfg.vm.provision "shell", inline: $jenkins, privileged: false	
+	end	
+end

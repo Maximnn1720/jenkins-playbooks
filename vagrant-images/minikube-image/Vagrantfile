@@ -1,0 +1,255 @@
+# Memory & CPUs
+USER_NAME = "user"
+HOME_DIR = "/home/user"
+
+# Memory & CPUs
+MEM = ENV['MEM'] || 4096
+CPUS = ENV['CPUS'] || 2
+
+# Management
+GROWPART = ENV['GROWPART'] || "true"
+
+# Minikube Variables
+KUBERNETES_VERSION = ENV['KUBERNETES_VERSION'] || "1.25.3"
+
+$installer = <<SCRIPT
+echo 'Staff install'
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+sudo apt-get update
+# Update apt and get dependencies
+sudo apt clean && sudo apt autoclean
+sudo apt update --fix-missing 
+sudo apt update
+sudo apt-get -y update
+sudo apt-mark hold grub
+sudo apt-mark hold grub-pc
+sudo apt-get -y upgrade
+sudo apt-get install -y zip unzip curl wget socat ebtables git vim
+sudo apt install default-jre -y
+SCRIPT
+
+$docker = <<SCRIPT
+echo "nameserver 8.8.8.8 download.docker.com" | sudo tee /etc/resolv.conf > /dev/null
+sudo apt-get update
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+sudo apt-get -y update
+sudo apt-get install -y docker-ce
+sudo systemctl start docker
+
+sudo usermod -a -G docker user
+
+SCRIPT
+
+$growpart = <<SCRIPT
+#!/bin/bash
+
+if [[ -b /dev/vda3 ]]; then
+  sudo growpart /dev/vda 3
+  sudo resize2fs /dev/vda3
+elif [[ -b /dev/sda3 ]]; then
+  sudo growpart /dev/sda 3
+  sudo resize2fs /dev/sda3
+fi
+
+SCRIPT
+
+$minikubescript = <<SCRIPT
+export USER_NAME=${USER_NAME}
+export HOME_DIR=${HOME_DIR}
+
+echo $USER_NAME
+echo $HOME_DIR
+	
+	#!/bin/bash
+
+	#Install minikube
+	echo "Downloading Minikube"
+	echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+	sudo apt-get update
+	curl -q -Lo minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 2>/dev/null
+	sudo chmod +x minikube
+	sudo mv minikube /usr/local/bin/
+
+	#Install kubectl
+ 	echo "Downloading Kubectl"
+ 	echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+ 	sudo apt-get update
+ 	curl -q -Lo kubectl https://storage.googleapis.com/kubernetes-release/release/v${KUBERNETES_VERSION}/bin/linux/amd64/kubectl 2>/dev/null
+ 	sudo chmod +x kubectl
+ 	sudo mv kubectl /usr/local/bin/
+
+	# Install crictl
+	echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+	sudo apt-get update
+	curl -qL https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.16.1/crictl-v1.16.1-linux-amd64.tar.gz 2>/dev/null | tar xzvf -
+	sudo chmod +x crictl
+	sudo mv crictl /usr/local/bin/
+
+	#Install stern
+	# TODO: Check sha256sum
+ 	echo "Downloading Stern"
+ 	echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+ 	sudo apt-get update
+ 	curl -q -Lo stern https://github.com/wercker/stern/releases/download/1.10.0/stern_linux_amd64 2>/dev/null
+ 	sudo chmod +x stern
+ 	sudo mv stern /usr/local/bin/
+
+	#Install kubecfg
+	# TODO: Check sha256sum
+	echo "Downloading Kubecfg"
+	echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+	sudo apt-get update
+	curl -q -Lo kubecfg https://github.com/ksonnet/kubecfg/releases/download/v0.9.0/kubecfg-linux-amd64 2>/dev/null
+	sudo chmod +x kubecfg
+	sudo mv kubecfg /usr/local/bin/
+
+sudo -u user /bin/sh <<\DEVOPS_BLOCK
+
+	#Setup minikube
+	echo "127.0.0.1 minikube minikube." | sudo tee -a /etc/hosts
+	mkdir -p $HOME_DIR/.minikube
+	mkdir -p $HOME_DIR/.kube
+	touch $HOME_DIR/.kube/config
+
+	export KUBECONFIG=$HOME_DIR/.kube/config
+
+	# Permissions
+	chown -R $USER_NAME:$USER_NAME $HOME_DIR/.kube
+	chown -R $USER_NAME:$USER_NAME $HOME_DIR/.minikube
+
+	export MINIKUBE_WANTUPDATENOTIFICATION=false
+	export MINIKUBE_WANTREPORTERRORPROMPT=false
+	export MINIKUBE_HOME=$HOME_DIR
+	export CHANGE_MINIKUBE_NONE_USER=true
+	export KUBECONFIG=$HOME_DIR/.kube/config
+
+	# Disable SWAP since is not supported on a kubernetes cluster
+	swapoff -a
+
+	## Start minikube
+	minikube start --vm-driver docker --kubernetes-version v${KUBERNETES_VERSION} --bootstrapper kubeadm
+
+	## Addons
+	minikube addons  enable ingress
+
+	## Configure user clients dir
+
+	printf "export MINIKUBE_WANTUPDATENOTIFICATION=false\n" >> /home/user/.bashrc
+	printf "export MINIKUBE_WANTREPORTERRORPROMPT=false\n" >> /home/user/.bashrc
+	printf "export MINIKUBE_HOME=/home/user\n" >> /home/user/.bashrc
+	printf "export CHANGE_MINIKUBE_NONE_USER=true\n" >> /home/user/.bashrc
+	printf "export KUBECONFIG=/home/user/.kube/config\n" >> /home/user/.bashrc
+	printf "source <(kubectl completion bash)\n" >> /home/user/.bashrc
+
+	# Permissions
+	chown -R $USER_NAME:$USER_NAME $HOME_DIR/.kube
+	chown -R $USER_NAME:$USER_NAME $HOME_DIR/.minikube
+DEVOPS_BLOCK
+
+	# Enforce sysctl
+	sudo sysctl -w vm.max_map_count=262144
+	sudo echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.d/90-vm_max_map_count.conf
+
+SCRIPT
+
+$ansible = <<SCRIPT
+echo 'Ansible install'
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+sudo apt-get update
+	# install pyton
+sudo add-apt-repository ppa:deadsnakes/ppa 
+sudo apt-get update
+sudo apt install python3.9 -y
+sudo apt-get install python3.9-distutils -y
+sudo python3.9 -m pip install --upgrade pip
+sudo python3.9 -m pip install --upgrade setuptools
+sudo python3.9 -m pip install --upgrade distlib
+sudo python3.9 -m pip install kubernetes openshift pyyaml
+	# install pip
+# curl -fsSL https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+# export PATH="$PATH:/home/vagrant/.local/bin"
+# echo $PATH
+# python3.9 get-pip.py --user
+	# install ansible
+
+	# В итоге заработало вот так:
+sudo apt-add-repository ppa:ansible/ansible
+sudo apt-get update -y
+sudo apt-get install ansible -y
+
+	# python3.9 -m pip install --user ansible
+	# python3.9 -m pip install --upgrade --user ansible
+ansible --version
+	# python3.9 -m pip show ansible
+SCRIPT
+
+$ssh_accessor = <<SCRIPT
+sudo chown user /home/user/.ssh/id_rsa
+sudo chown user /home/user/.ssh/id_rsa.pub
+sudo -u user /bin/sh <<\DEVOPS_BLOCK
+	echo 'Copying SSH Keys to the VM'
+	
+	chmod 700 /home/user/.ssh/id_rsa
+	chmod 777 /home/user/.ssh/id_rsa.pub
+		
+	cat /home/user/.ssh/id_rsa.pub >> /home/user/.ssh/authorized_keys	
+			
+	echo 'Host 10.0.0.*' >> /home/user/.ssh/config
+	echo 'StrictHostKeyChecking no' >> /home/user/.ssh/config
+	echo 'UserKnownHostsFile /dev/null' >> /home/user/.ssh/config
+	
+	chmod go-w /home/user/
+	chmod 700 /home/user/.ssh
+	chmod 600 /home/user/.ssh/authorized_keys
+	chmod 600 /home/user/.ssh/config
+	# sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /home/user/.ssh/config		
+DEVOPS_BLOCK
+sudo systemctl restart sshd.service
+SCRIPT
+
+$add_new_user = <<SCRIPT
+sudo useradd -p ${USER_NAME} -m -d ${HOME_DIR} -s /bin/bash -G sudo ${USER_NAME}
+echo '${USER_NAME} ALL=(ALL:ALL) NOPASSWD: ALL' | sudo EDITOR='tee -a' visudo
+sudo -u ${USER_NAME} /bin/sh <<\DEVOPS_BLOCK		
+	mkdir -p ${HOME_DIR}/.ssh
+	chmod 777 ${HOME_DIR}/.ssh	
+# попробовать использовать $USER $HOME
+DEVOPS_BLOCK
+sudo chmod 666 /var/run/docker.sock
+SCRIPT
+
+Vagrant.configure("2") do |config|
+	
+ 	config.vm.define "ansible_slave" do |vmCfg|
+ 		vmCfg.vm.box = "ubuntu/bionic64"
+ 		vmCfg.vm.hostname = "ansible-slave"
+		vmCfg.vm.network "private_network", ip: "10.0.0.222"
+		vmCfg.vm.provision 'shell', inline: 'echo "vagrant:vagrant" | chpasswd'
+ 		vmCfg.vm.network 'forwarded_port', guest: 8080, host: 3030
+		
+		vmCfg.vm.provider "virtualbox" do |provider, override|
+			provider.memory = MEM
+			provider.cpus = CPUS
+			provider.customize ["modifyvm", :id, "--cableconnected1", "on"]
+		end
+		
+		vmCfg.vm.provision "shell", inline: "echo \"1. installer script is running\""
+		vmCfg.vm.provision "shell", inline: $installer, privileged: false
+		vmCfg.vm.provision "shell", inline: "echo \"2. ansible script is running\""
+		vmCfg.vm.provision "shell", inline: $ansible, privileged: false	
+		vmCfg.vm.provision "shell", inline: "echo \"3. docker script is running\""
+		vmCfg.vm.provision "shell", inline: $docker, privileged: false
+		vmCfg.vm.provision "shell", inline: "echo \"4. growpart script is running\""
+		vmCfg.vm.provision "shell", inline: $growpart, privileged: false if GROWPART == "true"
+		vmCfg.vm.provision "shell", inline: "echo \"5. add_new_user script is running\""
+		vmCfg.vm.provision "shell", inline: $add_new_user, privileged: false, env: {"USER_NAME" => USER_NAME, "HOME_DIR" => HOME_DIR}
+		vmCfg.vm.provision "shell", inline: "echo \"6. ssh_accessor script is running\""
+ 		vmCfg.vm.provision "file", source: "~/.ssh/id_rsa", destination: "/home/user/.ssh/id_rsa"
+		vmCfg.vm.provision "file", source: "~/.ssh/id_rsa.pub", destination: "/home/user/.ssh/id_rsa.pub"
+		vmCfg.vm.provision "shell", inline: $ssh_accessor, privileged: false
+		vmCfg.vm.provision "shell", inline: "echo \"7. minikubescript script is running\""
+		vmCfg.vm.provision "shell", inline: $minikubescript, privileged: false, env: {"KUBERNETES_VERSION" => KUBERNETES_VERSION, "USER_NAME" => USER_NAME, "HOME_DIR" => HOME_DIR} 		 			 				
+ 	end
+	
+end
