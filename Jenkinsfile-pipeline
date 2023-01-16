@@ -11,7 +11,7 @@ pipeline {
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'slave_key', keyFileVariable: 'PRIVATE')]){
                     sh 'ansible all -i hosts.ini --key-file $PRIVATE -m ping -v'
-                    sh 'ansible-playbook SmartPlaybook.yml -i hosts.ini --private-key $PRIVATE'
+                    sh 'ansible-playbook playbook.yml -i hosts.ini --private-key $PRIVATE'
                 }
             }
         }

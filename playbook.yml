@@ -1,0 +1,7 @@
+---
+- name: "Test playbook run"
+  hosts: all
+  roles:
+    - deploy_app
+
+

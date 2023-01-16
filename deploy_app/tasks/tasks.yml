@@ -1,0 +1,55 @@
+---
+- name: Get existing image hash.
+  shell: |
+    eval $(minikube docker-env)
+    docker images -q {{ image_name }}
+  register: image_hash
+  changed_when: false
+- name: Pull image if it's not already pulled.
+  shell: |
+    eval $(minikube docker-env)
+    docker pull {{ image_name }}
+  when: not image_hash.stdout
+- name: Create a Service for app
+  k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ image_name }}"
+        namespace: default
+      spec:
+        type: NodePort
+        externalIPs: ["135.0.0.1"]
+        ports:
+          - port: 8080
+            targetPort: 80
+            nodePort: 30000
+        selector:
+          app: "{{ image_name }}"
+- name: Create a Deployment for app.
+  k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: "{{ image_name }}"
+        namespace: default
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: "{{ image_name }}"
+        template:
+          metadata:
+            labels:
+              app: "{{ image_name }}"
+          spec:
+            containers:
+              - name: "{{ image_name }}"
+                image: "{{ image_name }}:{{ image_tag }}"
+                imagePullPolicy: IfNotPresent
+                ports:
+                  - containerPort: 80
